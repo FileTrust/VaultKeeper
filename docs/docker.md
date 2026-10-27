@@ -27,7 +27,7 @@ release remains available on `main`. The command below selects the Docker branch
 
 ```sh
 git clone --branch feature/docker-installation https://github.com/FileTrust/VaultKeeper.git
-cd FileTrust-Vaultkeeper
+cd VaultKeeper
 ./docker.sh install
 ```
 

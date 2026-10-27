@@ -11,7 +11,7 @@ If the repository requires access, authenticate with an account that can read it
 ```sh
 gh auth login
 gh repo clone FileTrust/VaultKeeper
-cd FileTrust-Vaultkeeper
+cd VaultKeeper
 export GH_TOKEN="$(gh auth token)"
 sudo --preserve-env=GH_TOKEN bash install.sh
 unset GH_TOKEN
