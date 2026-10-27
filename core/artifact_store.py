@@ -90,6 +90,12 @@ class GitHubRelease:
             headers["Authorization"] = "Bearer " + self.token
         # requests strips Authorization when following redirects to the asset CDN.
         response = self.session.get(url, headers=headers, stream=True, timeout=(20, 60), **kwargs)
+        if response.status_code == 401 and "Authorization" in headers:
+            # A revoked developer login must not block a public download.
+            response.close()
+            self.token = None
+            headers.pop("Authorization")
+            response = self.session.get(url, headers=headers, stream=True, timeout=(20, 60), **kwargs)
         if response.status_code in (401, 404):
             response.close()
             raise RuntimeError("Release unavailable. For private testing, run gh auth login first")
