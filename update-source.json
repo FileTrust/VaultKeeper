@@ -1,0 +1,7 @@
+{
+  "schema": 1,
+  "product": "vaultkeeper",
+  "repository": "FileTrust/VaultKeeper",
+  "metadata_tag": "filetrust-updates",
+  "channel": "stable"
+}

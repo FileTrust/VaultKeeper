@@ -1,0 +1,48 @@
+x-node: &node
+  image: filetrust-vaultkeeper:${FILETRUST_DOCKER_PROJECT:-filetrust-vaultkeeper}
+  build:
+    context: .
+    target: runtime
+  platform: linux/amd64
+  init: true
+  network_mode: host
+  read_only: true
+  user: "10001:10001"
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  tmpfs:
+    - /run/filetrust-vaultkeeper:rw,noexec,nosuid,nodev,size=256m,uid=10001,gid=10001,mode=0700
+    - /opt/filetrust-vaultkeeper/.filetrust-updates:rw,noexec,nosuid,nodev,size=4m,uid=10001,gid=10001,mode=0755
+    - /tmp:rw,noexec,nosuid,nodev,size=64m,uid=10001,gid=10001,mode=0700
+  ulimits:
+    core: 0
+  logging:
+    driver: json-file
+    options: {max-size: "10m", max-file: "5"}
+
+services:
+  node:
+    <<: *node
+    command: [run]
+    restart: unless-stopped
+    stop_grace_period: 1h
+    volumes:
+      - state:/var/lib/filetrust-vaultkeeper
+      - credentials:/etc/filetrust-vaultkeeper:ro
+    healthcheck:
+      test: [CMD, python, /opt/filetrust-vaultkeeper/core/container_cli.py, health]
+      interval: 15s
+      timeout: 5s
+      start_period: 15m
+      retries: 3
+  setup:
+    <<: *node
+    profiles: [tools]
+    command: [idle]
+    volumes:
+      - state:/var/lib/filetrust-vaultkeeper
+      - credentials:/etc/filetrust-vaultkeeper
+
+volumes:
+  state:
+  credentials:

@@ -1,0 +1,8 @@
+web3==7.16.0
+eth-account==0.13.7
+cryptography==49.0.0
+requests==2.34.2
+
+# Signed application release discovery (no automatic installation).
+tuf==7.0.1
+securesystemslib==1.6.0
