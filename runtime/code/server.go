@@ -1507,6 +1507,12 @@ func handleStoreProtocol(s network.Stream, cfg ServerConfig, admissionHandshake 
 		failStore("persist store capacity mutation: "+err.Error(), 1)
 		return
 	}
+	if existingStoredMeta == nil {
+		if err := capacityMutation.RequireFreshPlacement(); err != nil {
+			failStore(err.Error(), 1)
+			return
+		}
+	}
 	// B.3: the byte-capacity admission decision is a short accounting read. It is taken under
 	// the global accounting mutex and RELEASED immediately. Sector placement, capacity
 	// publication and every chain RPC below then run without it, so uploads targeting different
@@ -1537,6 +1543,17 @@ func handleStoreProtocol(s network.Stream, cfg ServerConfig, admissionHandshake 
 	var sectorReceipt SectorReceipt
 	if existingStoredMeta != nil {
 		sectorReceipt, partitionLease, err = storedSectorReceipt(cfg.Storage, meta, cfg)
+		if err == nil {
+			sector, readErr := readSector(cfg.Storage, sectorReceipt.SectorID)
+			if readErr != nil {
+				err = readErr
+			} else {
+				err = capacityMutation.ObserveExistingSector(sector)
+			}
+			if err != nil {
+				partitionLease.Release()
+			}
+		}
 	} else {
 		sectorReceipt, meta, err = addPieceToSectorWithMutation(
 			cfg.Storage, meta, cfg, capacityMutation, &partitionLease,

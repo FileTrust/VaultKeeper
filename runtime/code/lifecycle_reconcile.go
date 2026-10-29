@@ -1803,6 +1803,55 @@ func listStoreLifecycleOperations(storage string) ([]StoreLifecycleOperation, er
 // reconcileStoreLifecycleOperationLocked either observes a completed on-chain
 // registration or removes an unregistered local sector from both the current
 // partition and local storage. storeCapacityMu must be held by the caller.
+// observeRecoveredStoreMutation runs under the store operation/accounting locks.
+// A legacy retry may already have created a different immutable sector under a
+// now-terminal journal sequence. Its replacement record must cover the actual
+// sector before either completing registration or rolling that sector back.
+func observeRecoveredStoreMutation(storage string, mutation *capacityMutationLease, pieceRoot string) error {
+	needed, err := mutation.needsStoreObservation()
+	if err != nil || !needed {
+		return err
+	}
+	sectors, err := listSectors(storage)
+	if err != nil {
+		return err
+	}
+	var found *SectorMeta
+	for _, sector := range sectors {
+		if sector.Status == "deleted" {
+			continue
+		}
+		for _, root := range sector.PieceRoots {
+			if sameRoot(root, pieceRoot) {
+				if found != nil {
+					return fmt.Errorf("store recovery piece belongs to multiple sectors")
+				}
+				copy := sector
+				found = &copy
+				break
+			}
+		}
+	}
+	if found == nil || !found.PartitionAssigned {
+		return fmt.Errorf("store recovery has no assigned local sector")
+	}
+	lock, err := acquirePartitionLifecycleLock(storage, found.DeadlineIndex, found.PartitionIndex)
+	if err != nil {
+		return err
+	}
+	defer lock.Release()
+	sector, err := readSector(storage, found.SectorID)
+	if err != nil {
+		return err
+	}
+	for _, root := range sector.PieceRoots {
+		if sameRoot(root, pieceRoot) {
+			return mutation.ObserveExistingSector(sector)
+		}
+	}
+	return fmt.Errorf("store recovery sector changed before observation")
+}
+
 func reconcileStoreLifecycleOperationLocked(cfg ServerConfig, operation StoreLifecycleOperation) (bool, error) {
 	expired := false
 	if operation.CommitmentHash != "" && cfg.FileRegistrationContract != "" {
@@ -1839,6 +1888,10 @@ func reconcileStoreLifecycleOperationLocked(cfg ServerConfig, operation StoreLif
 			}
 			operation.CapacityMutationSequence = mutation.JournalSequence()
 			_ = writeStoreLifecycleOperation(cfg.Storage, operation)
+			if observeErr := observeRecoveredStoreMutation(cfg.Storage, mutation, operation.PieceRoot); observeErr != nil {
+				mutation.Release()
+				return false, observeErr
+			}
 			if completeErr := mutation.Complete(); completeErr != nil {
 				mutation.Release()
 				return false, completeErr
@@ -1900,6 +1953,10 @@ func reconcileStoreLifecycleOperationLocked(cfg ServerConfig, operation StoreLif
 		return false, reconcileErr
 	}
 	if containsPiece {
+		if observeErr := observeRecoveredStoreMutation(cfg.Storage, storeMutation, operation.PieceRoot); observeErr != nil {
+			storeMutation.Release()
+			return false, observeErr
+		}
 		if completeErr := storeMutation.Complete(); completeErr != nil {
 			storeMutation.Release()
 			return false, completeErr
@@ -1952,8 +2009,10 @@ func reconcileStoreLifecycleOperationLocked(cfg ServerConfig, operation StoreLif
 		return false, err
 	}
 	if affected.SectorID != "" && cfg.ChainProofCmd != "" {
+		// The durable rollback record now describes the local successor. Chain
+		// synchronization and proof commands must run without a partition lock.
+		releasePartitionLock()
 		if _, err := syncDataPartitionAfterDelete(cfg, affected); err != nil {
-			releasePartitionLock()
 			return false, err
 		}
 		// Final proof generation acquires the host proof lock first and then

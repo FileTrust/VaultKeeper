@@ -20,7 +20,7 @@ from vk_http import session as http_session
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 REPOSITORY = "FileTrust/VaultKeeper"
-TAG = "vaultkeeper-test-2026-10-21.1"
+TAG = "vaultkeeper-recovery-2026-10-29.1"
 MAX_METADATA = 4 * 1024 * 1024
 
 
@@ -40,6 +40,10 @@ def verify_manifest(raw: bytes, signature: bytes, public_key: Path) -> dict:
     data=json.loads(raw)
     if data.get("schema")!=1 or data.get("product")!="vaultkeeper" or data.get("circuit_version")!="partition-w3-commitment-v1": raise ValueError("Unsupported VK artifact manifest")
     if not isinstance(data.get("bundles"),list) or not isinstance(data.get("networks"),dict): raise ValueError("Incomplete release metadata")
+    origin = data.get("artifact_release")
+    if origin is not None and (not isinstance(origin, str) or
+            not re.fullmatch(r"[A-Za-z0-9._-]{1,128}", origin)):
+        raise ValueError("Invalid signed artifact release reference")
     seen=set()
     for bundle in data["bundles"]:
         name=bundle["id"]
@@ -62,6 +66,9 @@ class GitHubRelease:
         if not re.fullmatch(r"[\w.-]+/[\w.-]+", repository) or not re.fullmatch(r"[\w.-]+", tag):
             raise ValueError("Invalid release location")
         self.session = http_session()
+        self.repository = repository
+        self.artifact_release = None
+        self._artifact_assets = None
         self.session.headers["User-Agent"] = "FileTrust-Vaultkeeper/1"
         self.token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
         if not self.token and shutil.which("gh"):
@@ -117,10 +124,18 @@ class GitHubRelease:
     def manifest(self, public_key):
         raw = self.small(self.assets["manifest.json"])
         signature = self.small(self.assets["manifest.sig"])
-        return verify_manifest(raw, signature, public_key), raw, signature
+        manifest = verify_manifest(raw, signature, public_key)
+        self.artifact_release = manifest.get("artifact_release")
+        return manifest, raw, signature
 
     def download(self, bundle, cache, progress=print):
-        url = bundle.get("url") or self.assets[bundle["asset"]]
+        assets = self.assets
+        if bundle["asset"] not in assets and self.artifact_release:
+            if self._artifact_assets is None:
+                self._artifact_assets = GitHubRelease(repository=self.repository,
+                    tag=self.artifact_release).assets
+            assets = self._artifact_assets
+        url = assets[bundle["asset"]]
         return download(self, url, bundle, cache, progress)
 
 

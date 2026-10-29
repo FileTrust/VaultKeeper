@@ -318,7 +318,31 @@ func getOrCreateCapacityMutationRecordUnlocked(
 				return capacityMutationJournalRecord{}, err
 			}
 		}
-		return record, nil
+		if record.Status != capacityMutationStatusResolved ||
+			record.ResolutionReason != capacityAbsentSuccessorResolutionReason ||
+			(mutationType != "store" && mutationType != "store_rollback") {
+			return record, nil
+		}
+		// A rolled-back store can be retried, but its terminal absence evidence
+		// describes the OLD physical sector. Preserve that record and allocate
+		// a new sequence for the new transition. Never turn absence into proof.
+		if len(record.Transitions) == 0 {
+			return capacityMutationJournalRecord{}, fmt.Errorf("resolved store has no predecessor transition")
+		}
+		for _, transition := range record.Transitions {
+			id := transition.New.SectorID
+			if id == "" {
+				id = transition.Old.SectorID
+			}
+			absent, checkErr := capacityMutationSectorStateMatches(storage,
+				capacityMutationSectorState{SectorID: id, Exists: false})
+			if checkErr != nil {
+				return capacityMutationJournalRecord{}, checkErr
+			}
+			if !absent {
+				return capacityMutationJournalRecord{}, fmt.Errorf("resolved predecessor sector is no longer absent")
+			}
+		}
 	}
 	if err := repairCapacityMutationPendingIndexUnlocked(storage); err != nil {
 		return capacityMutationJournalRecord{}, err
@@ -329,6 +353,9 @@ func getOrCreateCapacityMutationRecordUnlocked(
 		for _, record := range pending {
 			if record.OperationID != operationID {
 				continue
+			}
+			if record.MutationType != mutationType {
+				return capacityMutationJournalRecord{}, fmt.Errorf("pending capacity mutation type mismatch")
 			}
 			indexPayload, _ := json.MarshalIndent(struct {
 				Sequence uint64 `json:"sequence"`
@@ -467,6 +494,73 @@ func (lease *capacityMutationLease) OperationID() string {
 		return ""
 	}
 	return lease.operationID
+}
+
+// RequireFreshPlacement prevents a retry from changing physical storage under
+// an already-applied or prepared transition. The lifecycle reconciler must
+// finish/roll back that transition before a different sector can be allocated.
+func (lease *capacityMutationLease) RequireFreshPlacement() error {
+	if lease == nil || lease.journalSequence == 0 {
+		return nil
+	}
+	return withCapacityCoordinationLock(lease.storage, func() error {
+		record, found, err := readCapacityMutationJournalRecord(lease.storage, lease.journalSequence)
+		if err != nil {
+			return err
+		}
+		if !found || record.Status != capacityMutationStatusPlanned || len(record.Transitions) != 0 {
+			return fmt.Errorf("previous store transition must reconcile before fresh placement")
+		}
+		return nil
+	})
+}
+
+func (lease *capacityMutationLease) needsStoreObservation() (bool, error) {
+	if lease == nil || lease.journalSequence == 0 {
+		return false, nil
+	}
+	needed := false
+	err := withCapacityCoordinationLock(lease.storage, func() error {
+		record, found, err := readCapacityMutationJournalRecord(lease.storage, lease.journalSequence)
+		if err != nil {
+			return err
+		}
+		if !found {
+			return fmt.Errorf("store mutation record is missing")
+		}
+		needed = record.Status == capacityMutationStatusPlanned && len(record.Transitions) == 0
+		return nil
+	})
+	return needed, err
+}
+
+// ObserveExistingSector attaches exact local state when an interrupted store
+// already wrote its sector before its replacement journal entry was prepared.
+// The caller holds that partition's lifecycle lock. This is a zero-delta
+// observation requiring ordinary proof coverage, never a certification.
+func (lease *capacityMutationLease) ObserveExistingSector(sector SectorMeta) error {
+	if lease == nil || lease.journalSequence == 0 {
+		return nil
+	}
+	return withCapacityCoordinationLock(lease.storage, func() error {
+		record, found, err := readCapacityMutationJournalRecord(lease.storage, lease.journalSequence)
+		if err != nil {
+			return err
+		}
+		if !found {
+			return fmt.Errorf("store mutation record is missing")
+		}
+		if record.Status != capacityMutationStatusPlanned || len(record.Transitions) != 0 {
+			return nil
+		}
+		if record.MutationType != "store" || sector.SectorID == "" || sector.IsCapacity ||
+			!sector.PartitionAssigned || sector.Status == "deleted" || len(sector.PieceRoots) == 0 {
+			return fmt.Errorf("store recovery requires an assigned live data sector")
+		}
+		state := capacityMutationStateForSector(sector, true)
+		record.Transitions = []capacityMutationTransition{{Old: state, New: state}}
+		return writeCapacityMutationJournalRecord(lease.storage, record)
+	})
 }
 
 func (lease *capacityMutationLease) Complete() error {
