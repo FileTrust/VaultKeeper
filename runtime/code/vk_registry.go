@@ -192,7 +192,7 @@ func registerSelfInRegistry(cfg ServerConfig, peerID, multiaddr string) bool {
 	}
 	defer accountLock.Release()
 
-	nonce, err := rpcGetTransactionCount(cfg.RPCURL, fromAddr.Hex())
+	nonce, err := rpcAccountTransactionCount(cfg, fromAddr.Hex())
 	logEthCall("vk:eth.getTransactionCount", cfg.RPCURL, cfg.ChainID, "eth", "getTransactionCount", "", fromAddr.Hex(), statusFromErr(err), map[string]any{
 		"nonce":           nonce,
 		"target_function": "registerOrUpdateVaultKeeper",
@@ -521,7 +521,7 @@ func sendVKRegistryTransaction(
 	}
 	defer accountLock.Release()
 
-	nonce, err := rpcGetTransactionCount(cfg.RPCURL, fromAddr.Hex())
+	nonce, err := rpcAccountTransactionCount(cfg, fromAddr.Hex())
 	logEthCall("vk:eth.getTransactionCount", cfg.RPCURL, cfg.ChainID, "eth", "getTransactionCount", "", fromAddr.Hex(), statusFromErr(err), map[string]any{
 		"nonce":           nonce,
 		"target_function": functionName,
@@ -903,7 +903,7 @@ func syncAdmissionStatusOnRegistry(cfg ServerConfig, state AdmissionState) bool 
 	}
 	defer accountLock.Release()
 
-	nonce, err := rpcGetTransactionCount(cfg.RPCURL, fromAddr.Hex())
+	nonce, err := rpcAccountTransactionCount(cfg, fromAddr.Hex())
 	if err != nil {
 		log.Printf("[vk_adm] nonce: %v", err)
 		return false

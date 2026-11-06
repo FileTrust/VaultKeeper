@@ -391,7 +391,7 @@ func newSignedDeletionDeclaration(
 		fileRegMu.Unlock()
 	}
 
-	nonce, err := rpcGetTransactionCountCtx(ctx, cfg.RPCURL, fromAddr.Hex())
+	nonce, err := rpcAccountTransactionCountCtx(ctx, cfg, fromAddr.Hex())
 	if err != nil {
 		unlock()
 		return sd, fmt.Errorf("get nonce: %w", err)
@@ -703,7 +703,7 @@ func sendDeletionTxCtx(
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return "", fmt.Errorf("deletion tx cancelled before nonce fetch: %w", ctxErr)
 	}
-	nonce, err := rpcGetTransactionCountCtx(ctx, cfg.RPCURL, fromAddr.Hex())
+	nonce, err := rpcAccountTransactionCountCtx(ctx, cfg, fromAddr.Hex())
 	logEthCall("vk:eth.getTransactionCount", cfg.RPCURL, cfg.ChainID, "eth", "getTransactionCount", "", fromAddr.Hex(), statusFromErr(err), map[string]any{
 		"nonce":           nonce,
 		"target_function": funcName,

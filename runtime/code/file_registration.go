@@ -221,7 +221,7 @@ func registerFileStorageOnChain(
 	}
 	defer accountLock.Release()
 
-	nonce, err := rpcGetTransactionCount(cfg.RPCURL, fromAddr.Hex())
+	nonce, err := rpcAccountTransactionCount(cfg, fromAddr.Hex())
 	logEthCall("vk:eth.getTransactionCount", cfg.RPCURL, cfg.ChainID, "eth", "getTransactionCount", "", fromAddr.Hex(), statusFromErr(err), map[string]any{
 		"nonce":           nonce,
 		"target_function": "registerFileStorage",
@@ -280,6 +280,7 @@ func registerFileStorageOnChain(
 		}
 	}
 	if err != nil {
+		log.Printf("[file_reg] broadcast failed tx=%s nonce=%d commitmentHash=%s: %v", signedTx.Hash().Hex(), nonce, commitmentHash, err)
 		return "", fmt.Errorf("file_reg: send tx: %w", err)
 	}
 
@@ -557,7 +558,6 @@ func rpcTransactionInMempoolCtx(ctx context.Context, rpcURL, txHash string) (boo
 	}
 	return result != nil, nil
 }
-
 
 type onChainFileStorageRecord struct {
 	Exists            bool

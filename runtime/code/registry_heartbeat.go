@@ -96,7 +96,7 @@ func registryHeartbeatTick(ctx context.Context, cfg ServerConfig) (bool, error) 
 		if !strings.EqualFold(ethcrypto.PubkeyToAddress(priv.PublicKey).Hex(), cfg.VKAddress) {
 			return false, fmt.Errorf("heartbeat signer mismatch")
 		}
-		nonce, e := rpcGetTransactionCountCtx(ctx, cfg.RPCURL, cfg.VKAddress)
+		nonce, e := rpcAccountTransactionCountCtx(ctx, cfg, cfg.VKAddress)
 		if e != nil {
 			return false, e
 		}

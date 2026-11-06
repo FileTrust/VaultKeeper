@@ -199,8 +199,14 @@ def _sp_load_config() -> dict:
                 return cfg[low]
         return default
 
+    storage = str(get("VK_STORAGE", "storage", "storage_path", default=""))
+    if storage and not Path(storage).is_absolute() and config_path:
+        storage = str(Path(config_path).resolve().parent / storage)
     return {
         "rpc_url":        get("RPC_URL"),
+        "storage": storage,
+        "chain_id": int(get("CHAIN_ID", "chain_id", default="0")),
+        "vault_keeper_registry_address": get("VAULT_KEEPER_REGISTRY_ADDRESS", "vault_keeper_registry_address"),
         "address":        get("STORAGEPROOF_ADDRESS"),
         "json":           get("STORAGEPROOF_JSON"),
         "capacity_proof_address": get(
@@ -238,6 +244,8 @@ def _sp_load_config() -> dict:
         "transaction_log_path": get("TRANSACTION_LOG_PATH", default=str(TX.default_log_path())),
         "log_eth_calls": str(get("LOG_ETH_CALLS", "log_eth_calls", default="false")).lower() in {"true", "1", "yes", "on"},
     }
+
+
 
 
 def _sp_load_contract(
@@ -367,6 +375,37 @@ def _sp_load_capacity_proof_contract(w3: Web3, storage_contract, cfg: dict):
     return contract
 
 
+def _sp_guard_heartbeat_nonce(w3, address, context, nonce, *, explicit=False):
+    """Check the saved heartbeat while the caller owns the account flock.
+
+    Never rebuild/rebroadcast or remove another worker's envelope. A stale RPC
+    count cannot overwrite its nonce, including after a lost send response.
+    """
+    storage = context.get("storage")
+    if not storage:
+        return nonce
+    try:
+        pending = json.loads((Path(storage) / "registry-heartbeat.json").read_text())
+    except FileNotFoundError:
+        return nonce
+    reserved = pending.get("nonce")
+    if (type(reserved) is not int or not 0 <= reserved < 2**64
+            or type(pending.get("chain_id")) is not int
+            or pending.get("chain_id") != int(context.get("chain_id") or w3.eth.chain_id)
+            or str(pending.get("address", "")).lower() != address.lower()
+            or str(pending.get("target", "")).lower() != str(context.get("vault_keeper_registry_address", "")).lower()
+            or not isinstance(pending.get("hash"), str) or not pending.get("hash")):
+        raise RuntimeError("Pending account heartbeat identity/network mismatch")
+    if nonce > reserved:
+        return nonce
+    confirmed = w3.eth.get_transaction_count(address, "latest")
+    if confirmed > reserved and not explicit:
+        return confirmed
+    raise RuntimeError("Account heartbeat transaction is unresolved; retry after reconciliation")
+
+
+
+
 def _sp_send_tx(w3: Web3, account, fn, value: int = 0, context: dict | None = None,
                 explicit_nonce: int | None = None, caller_holds_lock: bool = False) -> str:
     ctx = context or {}
@@ -439,6 +478,8 @@ def _sp_send_tx(w3: Web3, account, fn, value: int = 0, context: dict | None = No
                     nonce = int(explicit_nonce)
                 else:
                     nonce = w3.eth.get_transaction_count(from_addr, "pending")
+                nonce = _sp_guard_heartbeat_nonce(w3, from_addr, ctx, nonce,
+                                                 explicit=explicit_nonce is not None)
                 # Echo the exact nonce used back through the caller's context (not the local
                 # `ctx = context or {}`, which may be a fresh dict when context is empty).
                 if context is not None:
@@ -480,12 +521,17 @@ def _sp_send_tx(w3: Web3, account, fn, value: int = 0, context: dict | None = No
                     "gasPrice": gas_price,
                     "value": value,
                 }
-                tx_hash = fn.transact({
+                options = {
                     "from": from_addr,
                     "gas": gas + 80_000,
                     "gasPrice": gas_price,
                     "value": value,
-                })
+                }
+                if ctx.get("storage") and (Path(ctx["storage"]) / "registry-heartbeat.json").exists():
+                    options["nonce"] = _sp_guard_heartbeat_nonce(
+                        w3, from_addr, ctx, w3.eth.get_transaction_count(from_addr, "pending"))
+                    tx["nonce"] = options["nonce"]
+                tx_hash = fn.transact(options)
             receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
     except Exception as exc:
         TX.log_contract_transaction_attempt(
@@ -514,6 +560,8 @@ def _sp_send_tx(w3: Web3, account, fn, value: int = 0, context: dict | None = No
     if int(receipt.status) != 1:
         _sp_fail(f"tx failed: {tx_hash.hex()}")
     return tx_hash.hex()
+
+
 
 
 def _sp_bytes32(value: str, label: str) -> bytes:

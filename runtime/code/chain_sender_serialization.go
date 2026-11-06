@@ -56,7 +56,11 @@ package main
 //	reserve-and-journal protocol, or any contract precondition. It only guarantees that
 //	family A and family B can never be inside their nonce windows at the same time.
 
-import "strings"
+import (
+	"os"
+	"path/filepath"
+	"strings"
+)
 
 // chainTxProducingActions is the exact set of adapter actions that BROADCAST a transaction
 // for the VK sender. Read-only actions must stay out: serialising them would put every
@@ -122,5 +126,16 @@ func withChainSenderSerialization(req ChainProofCommandRequest, fn func(bool) (C
 		return ChainProofCommandResponse{}, err
 	}
 	defer lock.Release()
+	// The subprocess must not allocate over an unresolved heartbeat, even if
+	// an older RPC omits it from its pending count. No extra RPC in the usual
+	// case where there is no heartbeat envelope awaiting reconciliation.
+	cfg := activeFreezeChainConfig
+	if cfg.Storage != "" {
+		if _, statErr := os.Stat(filepath.Join(cfg.Storage, "registry-heartbeat.json")); !os.IsNotExist(statErr) {
+			if _, err := rpcAccountTransactionCount(cfg, address); err != nil {
+				return ChainProofCommandResponse{}, err
+			}
+		}
+	}
 	return fn(true)
 }

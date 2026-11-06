@@ -456,7 +456,7 @@ func coordinatedFreezeBroadcast(coord freezeBroadcastCoord, chainCmd string, par
 	}
 	defer lock.Release()
 
-	reservedNonce, err := rpcGetTransactionCount(cfg.RPCURL, cfg.VKAddress) // "pending", under the flock
+	reservedNonce, err := rpcAccountTransactionCount(cfg, cfg.VKAddress) // "pending", under the flock
 	if err != nil {
 		return FrozenPartitionSnapshotStatus{}, "", fmt.Errorf("reserve sender nonce: %w", err)
 	}

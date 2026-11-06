@@ -841,7 +841,7 @@ func sendCapacityQuoteTransaction(cfg ServerConfig, calldata []byte, functionNam
 		return "", err
 	}
 	defer accountLock.Release()
-	nonce, err := rpcGetTransactionCount(cfg.RPCURL, fromAddr.Hex())
+	nonce, err := rpcAccountTransactionCount(cfg, fromAddr.Hex())
 	if err != nil {
 		return "", fmt.Errorf("capacity quote nonce: %w", err)
 	}

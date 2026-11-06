@@ -200,7 +200,7 @@ func sendVKTransaction(
 	}
 	gasLimit = gasLimit * 12 / 10
 
-	nonce, nonceErr := rpcGetTransactionCount(cfg.RPCURL, fromAddr.Hex())
+	nonce, nonceErr := rpcAccountTransactionCount(cfg, fromAddr.Hex())
 	logEthCall("vk:eth.getTransactionCount", cfg.RPCURL, cfg.ChainID, "eth", "getTransactionCount", "", fromAddr.Hex(), statusFromErr(nonceErr), map[string]any{
 		"nonce":           nonce,
 		"target_function": functionName,
