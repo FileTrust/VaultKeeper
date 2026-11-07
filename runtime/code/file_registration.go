@@ -97,7 +97,9 @@ var (
 //   - Returns (txHash, nil) on successful submission.
 //   - Returns ("", ErrAlreadyRegistered) when the record already exists on-chain
 //     under this same VK address — the caller should treat this as success.
-//   - Returns ("", err) on any other error — the caller must fail the store.
+//   - A broadcast error returns the locally signed hash and the error. The
+//     hash is a recovery hint, not confirmation; callers retain chain checks.
+//   - Earlier errors return ("", err).
 //
 // Note: we wait only for mempool acceptance, not block confirmation. The txHash
 // is included in the receipt so the DO can verify confirmation independently.
@@ -281,7 +283,7 @@ func registerFileStorageOnChain(
 	}
 	if err != nil {
 		log.Printf("[file_reg] broadcast failed tx=%s nonce=%d commitmentHash=%s: %v", signedTx.Hash().Hex(), nonce, commitmentHash, err)
-		return "", fmt.Errorf("file_reg: send tx: %w", err)
+		return signedTx.Hash().Hex(), fmt.Errorf("file_reg: send tx: %w", err)
 	}
 
 	log.Printf("[file_reg] tx submitted  commitmentHash=%s  sectorRoot=%s  tx=%s",
