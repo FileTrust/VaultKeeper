@@ -97,8 +97,9 @@ var (
 //   - Returns (txHash, nil) on successful submission.
 //   - Returns ("", ErrAlreadyRegistered) when the record already exists on-chain
 //     under this same VK address — the caller should treat this as success.
-//   - A broadcast error returns the locally signed hash and the error. The
-//     hash is a recovery hint, not confirmation; callers retain chain checks.
+//   - A broadcast error returns the locally signed hash only when its exact
+//     successful registration receipt is available; otherwise the hash is empty.
+//     The original error and the caller's record checks are preserved.
 //   - Earlier errors return ("", err).
 //
 // Note: we wait only for mempool acceptance, not block confirmation. The txHash
@@ -283,12 +284,60 @@ func registerFileStorageOnChain(
 	}
 	if err != nil {
 		log.Printf("[file_reg] broadcast failed tx=%s nonce=%d commitmentHash=%s: %v", signedTx.Hash().Hex(), nonce, commitmentHash, err)
-		return signedTx.Hash().Hex(), fmt.Errorf("file_reg: send tx: %w", err)
+		recoveredHash := ""
+		if confirmedRegistrationReceipt(cfg, signedTx.Hash().Hex(), commitmentHash, sectorRoot, deadlineIndex, partitionIndex, serviceEnd) {
+			recoveredHash = signedTx.Hash().Hex()
+		}
+		return recoveredHash, fmt.Errorf("file_reg: send tx: %w", err)
 	}
 
 	log.Printf("[file_reg] tx submitted  commitmentHash=%s  sectorRoot=%s  tx=%s",
 		truncate(commitmentHash, 18), truncate(sectorRoot, 18), txHash)
 	return txHash, nil
+}
+
+// confirmedRegistrationReceipt never rebroadcasts. A failed or unknown duplicate
+// must not replace the original registration's hash in an immutable DO journal.
+// DO independently checks canonical evidence before finalizing the upload.
+func confirmedRegistrationReceipt(cfg ServerConfig, txHash, commitmentHash, sectorRoot string, deadlineIndex, partitionIndex int, serviceEnd int64) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	result, err := rpcNullableResultCtx(ctx, cfg.RPCURL, "eth_getTransactionReceipt", []any{txHash})
+	if err != nil || result == nil {
+		return false
+	}
+	var receipt struct {
+		TransactionHash string `json:"transactionHash"`
+		Status          string `json:"status"`
+		To              string `json:"to"`
+		Logs            []struct {
+			Address string   `json:"address"`
+			Topics  []string `json:"topics"`
+			Data    string   `json:"data"`
+			Removed bool     `json:"removed"`
+		} `json:"logs"`
+	}
+	if json.Unmarshal(result, &receipt) != nil || receipt.Status != "0x1" || !strings.EqualFold(receipt.TransactionHash, txHash) || !strings.EqualFold(receipt.To, cfg.FileRegistrationContract) {
+		return false
+	}
+	expectedTopics := []string{
+		ethcrypto.Keccak256Hash([]byte("FileStorageRegistered(bytes32,bytes32,address,uint8,uint8,uint64)")).Hex(),
+		commitmentHash, sectorRoot, common.BytesToHash(common.HexToAddress(cfg.VKAddress).Bytes()).Hex(),
+	}
+	expectedData := fmt.Sprintf("0x%064x%064x%064x", deadlineIndex, partitionIndex, serviceEnd)
+	for _, entry := range receipt.Logs {
+		if entry.Removed || !strings.EqualFold(entry.Address, cfg.FileRegistrationContract) || len(entry.Topics) != len(expectedTopics) || !strings.EqualFold(entry.Data, expectedData) {
+			continue
+		}
+		matches := true
+		for i, topic := range expectedTopics {
+			matches = matches && strings.EqualFold(entry.Topics[i], topic)
+		}
+		if matches {
+			return true
+		}
+	}
+	return false
 }
 
 // ─── JSON-RPC helpers ─────────────────────────────────────────────────────────
