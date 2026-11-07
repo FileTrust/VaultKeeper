@@ -169,11 +169,15 @@ func aclIsDataOwnerForFile(rpcURL, aclAddress, fileID, uploader string) (bool, e
 		}, "latest"},
 	}
 	body, _ := json.Marshal(payload)
-	resp, err := http.Post(rpcURL, "application/json", bytes.NewReader(body))
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Post(rpcURL, "application/json", bytes.NewReader(body))
 	if err != nil {
-		return false, fmt.Errorf("ACL data-owner RPC call failed: %w", err)
+		return false, fmt.Errorf("%w: ACL data-owner RPC call failed: %v", ErrRPCUnavailable, err)
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return false, fmt.Errorf("%w: ACL data-owner HTTP status %d", ErrRPCUnavailable, resp.StatusCode)
+	}
 	var out struct {
 		Result string `json:"result"`
 		Error  *struct {
@@ -181,17 +185,20 @@ func aclIsDataOwnerForFile(rpcURL, aclAddress, fileID, uploader string) (bool, e
 		} `json:"error"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return false, fmt.Errorf("ACL data-owner response decode failed: %w", err)
+		return false, fmt.Errorf("%w: ACL data-owner response decode failed: %v", ErrRPCUnavailable, err)
 	}
 	if out.Error != nil {
-		return false, fmt.Errorf("ACL data-owner RPC error: %s", out.Error.Message)
+		return false, fmt.Errorf("%w: ACL data-owner RPC error: %s", ErrRPCUnavailable, out.Error.Message)
 	}
+	// An unavailable or malformed answer is not an ownership denial. Accept
+	// only a canonical ABI bool; all uncertain reads remain unauthorized.
 	result := strings.TrimPrefix(out.Result, "0x")
-	if len(result) < 64 {
-		return false, nil
+	decoded, decodeErr := hex.DecodeString(result)
+	value := new(big.Int).SetBytes(decoded)
+	if !strings.HasPrefix(out.Result, "0x") || len(decoded) != 32 || decodeErr != nil || (value.Sign() != 0 && value.Cmp(big.NewInt(1)) != 0) {
+		return false, fmt.Errorf("%w: ACL data-owner response is not an ABI bool", ErrRPCUnavailable)
 	}
-	value, ok := new(big.Int).SetString(result[len(result)-64:], 16)
-	return ok && value.Sign() != 0, nil
+	return value.Sign() != 0, nil
 }
 
 func authorizeGetRequest(rpcURL, aclAddress, storage string, req GetReq) error {

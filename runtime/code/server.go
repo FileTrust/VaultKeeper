@@ -3167,7 +3167,15 @@ func handleDelete(s network.Stream, cfg ServerConfig) {
 		deleteFileID = meta.FileID
 	}
 	if err := authorizeDeleteRequest(cfg, req, deleteFileID); err != nil {
-		writeJSON(s, DeleteResp{Terminal: true, Error: "deletion authorization failed: " + err.Error()})
+		if errors.Is(err, ErrRPCUnavailable) {
+			// No deletion is accepted until ownership can be checked. Let the
+			// DO's durable monitor retry with fresh authorization next tick.
+			writeJSON(s, DeleteResp{Pending: true, Retryable: true,
+				Phase: "authorization_pending", ErrorCode: "authorization_rpc_unavailable",
+				Error: "deletion authorization temporarily unavailable; retry later"})
+		} else {
+			writeJSON(s, DeleteResp{Terminal: true, Error: "deletion authorization failed: " + err.Error()})
+		}
 		return
 	}
 
