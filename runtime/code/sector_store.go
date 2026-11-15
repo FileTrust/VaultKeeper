@@ -191,6 +191,8 @@ const (
 // If no suitable sector is found, returns (zero, placementNew*, false) and the
 // caller must create a new sector.
 func findBestSectorForPiece(sectors []SectorMeta, serviceEnd int64, cfg ServerConfig, estimatedLeaves int) (SectorMeta, sectorPlacementResult, bool) {
+
+	serviceEnd = terminalProofExpiration(cfg, serviceEnd)
 	now := time.Now().UTC().Unix()
 	buckets := resolvedBuckets(cfg)
 	maxExt := resolvedMaxExtension(cfg)
@@ -283,10 +285,11 @@ func min(a, b int) int {
 // ─── Sector creation ──────────────────────────────────────────────────────────
 
 func newSector(cfg ServerConfig, requiredUntil int64) SectorMeta {
-	return newSectorWithID(cfg, requiredUntil, fmt.Sprintf("sector-%d", time.Now().UTC().UnixNano()))
+	return newDataSectorWithID(cfg, requiredUntil, fmt.Sprintf("sector-%d", time.Now().UTC().UnixNano()))
 }
 
 func newSectorWithID(cfg ServerConfig, requiredUntil int64, sectorID string) SectorMeta {
+
 	buckets := resolvedBuckets(cfg)
 	now := time.Now().UTC()
 
@@ -483,7 +486,7 @@ func addPieceToSectorAttempt(storage string, meta PieceMeta, cfg ServerConfig, m
 			slotReservation = &reservation
 			if !strings.EqualFold(reservation.SectorID, sector.SectorID) {
 				// A retry adopts the sector this operation already reserved.
-				sector = newSectorWithID(cfg, serviceEnd, reservation.SectorID)
+				sector = newDataSectorWithID(cfg, serviceEnd, reservation.SectorID)
 			}
 			sector.DeadlineIndex = reservation.DeadlineIndex
 			sector.PartitionIndex = reservation.PartitionIndex

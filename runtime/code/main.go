@@ -18,6 +18,7 @@ import (
 )
 
 func main() {
+	defer diagnosticPanic()
 	// Presentation only: reformats whole log lines on their way to stdout and
 	// changes nothing about what is logged. VK_LOG_FORMAT=raw restores the
 	// original format; NO_COLOR or VK_LOG_COLOR=never drops the colour.
@@ -174,9 +175,10 @@ func main() {
 	logKeepDays := flag.Int("log-keep-days", defaultLogKeepDays, "delete gzipped logs older than this")
 	logMaxTotalMB := flag.Int64("log-max-total-mb", defaultLogMaxTotalMB, "cap the whole log folder at this size")
 	flag.Parse()
+	diagnosticInit(*mode, *storage)
 	loadedKey, keyErr := loadSigningKeyFile(*vkPrivKeyFile, *vkPrivKeyHex)
 	if keyErr != nil {
-		log.Fatal(keyErr)
+		diagnosticFatal(keyErr)
 	}
 	*vkPrivKeyHex = loadedKey
 
@@ -204,10 +206,10 @@ func main() {
 		(*mode == "server" || *mode == "proof-daemon" || *mode == "sector-proof") {
 		storagePath, err := filepath.Abs(*storage)
 		if err != nil {
-			log.Fatalf("resolve storage path for proof host lock: %v", err)
+			diagnosticFatalf("resolve storage path for proof host lock: %v", err)
 		}
 		if err := os.Setenv(proofHostLockPathEnv, filepath.Join(filepath.Dir(storagePath), ".proof-work.lock")); err != nil {
-			log.Fatalf("configure proof host lock: %v", err)
+			diagnosticFatalf("configure proof host lock: %v", err)
 		}
 	}
 
@@ -216,10 +218,10 @@ func main() {
 		installVKStopSignals()
 	}
 	if *maxPieceSizeBytes < 0 {
-		log.Fatal("--max-piece-size-bytes must be >= 0")
+		diagnosticFatal("--max-piece-size-bytes must be >= 0")
 	}
 	if *maxConcurrentUploads <= 0 || *maxConcurrentDownloads <= 0 || *maxQueuedTransfers < 0 || *maxTransfersPerPeer <= 0 {
-		log.Fatal("transfer concurrency limits must be positive (queue may be zero)")
+		diagnosticFatal("transfer concurrency limits must be positive (queue may be zero)")
 	}
 	if *maxTemporaryUploadBytes < 0 || *transferQueueWaitSeconds < 0 || *transferRetryAfterSeconds <= 0 ||
 		*partialUploadTTLSeconds <= 0 || *completedTransferTTLSeconds <= 0 ||
@@ -230,17 +232,17 @@ func main() {
 		*quoteTransferMinBytesPerSecond <= 0 || *quoteTransferRecoveryGraceSeconds <= 0 ||
 		*filesystemReserveBytes < 0 ||
 		*proofTransferReservePercent < 0 || *proofTransferReservePercent >= 100 {
-		log.Fatal("invalid transfer resource-limit configuration")
+		diagnosticFatal("invalid transfer resource-limit configuration")
 	}
 	if err := setChainProofCommandTimeout(time.Duration(*chainCommandTimeoutSeconds) * time.Second); err != nil {
-		log.Fatalf("invalid --chain-command-timeout-seconds: %v", err)
+		diagnosticFatalf("invalid --chain-command-timeout-seconds: %v", err)
 	}
 
 	// Derive VK Ethereum address from private key when receipt signing is enabled.
 	vkAddr := ""
 	if *vkPrivKeyHex != "" {
 		if pk, err := ParseVKPrivKey(*vkPrivKeyHex); err != nil {
-			log.Fatalf("invalid --vk-private-key: %v", err)
+			diagnosticFatalf("invalid --vk-private-key: %v", err)
 		} else {
 			vkAddr = VKAddressFromKey(pk)
 			if *chainID != 0 {
@@ -255,12 +257,12 @@ func main() {
 		if identity == "" {
 			storagePath, err := filepath.Abs(*storage)
 			if err != nil {
-				log.Fatalf("resolve storage path for proof job identity: %v", err)
+				diagnosticFatalf("resolve storage path for proof job identity: %v", err)
 			}
 			identity = "storage:" + storagePath
 		}
 		if err := os.Setenv(proofJobVKIdentityEnv, identity); err != nil {
-			log.Fatalf("configure proof job VK identity: %v", err)
+			diagnosticFatalf("configure proof job VK identity: %v", err)
 		}
 	}
 
@@ -364,10 +366,10 @@ func main() {
 		ChainProofCmd:                           *chainProofCmd,
 	}
 	if err := configureProofResourceController(cfg); err != nil {
-		log.Fatalf("invalid proof resource configuration: %v", err)
+		diagnosticFatalf("invalid proof resource configuration: %v", err)
 	}
 	if err := validateCapacityProofBatchConfig(cfg); err != nil {
-		log.Fatalf("invalid capacity proof batching configuration: %v", err)
+		diagnosticFatalf("invalid capacity proof batching configuration: %v", err)
 	}
 	if cfg.ProofTransferReservePercent != 0 {
 		log.Printf("[proof-resource] proof_transfer_reserve_percent=%d is deprecated and ignored; foreground transfer limits are never reduced", cfg.ProofTransferReservePercent)
@@ -393,7 +395,7 @@ func main() {
 	case "quote":
 		mustHave(*peerAddr, "--peer")
 		if *pieceSize <= 0 {
-			log.Fatal("missing or invalid --size")
+			diagnosticFatal("missing or invalid --size")
 		}
 		runQuote(ctx, *peerAddr, *pieceSize, *serviceEnd, *transferID,
 			*blockedDemandID, *blockedDemandCapability, *clientIdentityKey,
@@ -402,7 +404,7 @@ func main() {
 		mustHave(*peerAddr, "--peer")
 		mustHave(*paymentCommitment, "--payment-commitment")
 		if *serviceEnd <= 0 {
-			log.Fatal("missing or invalid --service-end")
+			diagnosticFatal("missing or invalid --service-end")
 		}
 		runRenew(ctx, *peerAddr, *paymentCommitment, *serviceEnd, *clientIdentityKey)
 	case "info":
@@ -444,11 +446,11 @@ func main() {
 	case "quiesce-freezes":
 		ensureStorageForCLI(*storage)
 		if err := runFreezeQuiesceCLI(*storage, vkAddr, *quiesceState); err != nil {
-			log.Fatalf("[quiesce] %v", err)
+			diagnosticFatalf("[quiesce] %v", err)
 		}
 	case "gc":
 		if *olderHours <= 0 {
-			log.Fatal("missing or invalid --older-hours")
+			diagnosticFatal("missing or invalid --older-hours")
 		}
 		runGC(*storage, time.Duration(*olderHours)*time.Hour)
 	case "expired-gc":
@@ -456,7 +458,7 @@ func main() {
 		ensureStorageForCLI(*storage)
 		clock, clockErr := proofClockStatusOnChain(*chainProofCmd)
 		if clockErr != nil {
-			log.Fatalf("[gc] blockchain time unavailable; refusing unsafe host-time cleanup: %v", clockErr)
+			diagnosticFatalf("[gc] blockchain time unavailable; refusing unsafe host-time cleanup: %v", clockErr)
 		}
 		log.Printf("[gc] running one-shot expired-sector cleanup storage=%s chainTimestamp=%d", *storage, clock.ChainTimestamp)
 		result := runExpiredGCDetailedAt(*storage, nil, clock.ChainTimestamp)
@@ -491,12 +493,12 @@ func main() {
 		if cfg.CapacityBytes > 0 {
 			mustHave(cfg.CapacityProofContract, "--capacity-proof-contract")
 			if !cfg.DeterministicChallenge || cfg.DeadlineCount <= 0 || cfg.PartitionProverCmd == "" {
-				log.Fatal("capacity proof daemon requires deterministic partition snapshots")
+				diagnosticFatal("capacity proof daemon requires deterministic partition snapshots")
 			}
 		}
 		runProofDaemon(*storage, *proofPeriodSeconds, *proofPollSeconds, *challengeCount, *zkProverCmd, *chainProofCmd, *proofOnce, *deadlineCount, *partitionMaxSectors, *partitionProverCmd, *deterministicChallenge, cfg.CapacityBytes, cfg)
 	default:
-		log.Fatalf("unknown mode: %s", *mode)
+		diagnosticFatalf("unknown mode: %s", *mode)
 	}
 }
 
@@ -516,13 +518,14 @@ func writePrettyJSON(w io.Writer, v any) {
 }
 
 func fatalJSON(err error) {
+	diagnosticCapture("FT_OPERATION_FAILED", "error")
 	writePrettyJSON(os.Stderr, map[string]any{"ok": false, "err": err.Error()})
 	os.Exit(1)
 }
 
 func mustHave(v, name string) {
 	if strings.TrimSpace(v) == "" {
-		log.Fatalf("missing %s", name)
+		diagnosticFatalf("missing %s", name)
 	}
 }
 

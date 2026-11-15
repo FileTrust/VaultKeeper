@@ -25,7 +25,7 @@ import (
 func newClientHost() host.Host {
 	h, err := libp2p.New(libp2p.ListenAddrStrings("/ip4/0.0.0.0/tcp/0"))
 	if err != nil {
-		log.Fatal(err)
+		diagnosticFatal(err)
 	}
 	return h
 }
@@ -39,13 +39,13 @@ func newClientHostWithIdentity(keyPath string) host.Host {
 	}
 	privateKey, err := loadOrCreateClientIdentity(keyPath)
 	if err != nil {
-		log.Fatal(err)
+		diagnosticFatal(err)
 	}
 	h, err := libp2p.New(
 		libp2p.ListenAddrStrings("/ip4/0.0.0.0/tcp/0"), libp2p.Identity(privateKey),
 	)
 	if err != nil {
-		log.Fatal(err)
+		diagnosticFatal(err)
 	}
 	return h
 }
@@ -128,7 +128,7 @@ func tryOpenStream(ctx context.Context, h host.Host, addr string, protocols ...p
 func openStream(ctx context.Context, h host.Host, addr string, proto protocol.ID) network.Stream {
 	s, err := tryOpenStream(ctx, h, addr, proto)
 	if err != nil {
-		log.Fatal(err)
+		diagnosticFatal(err)
 	}
 	return s
 }
@@ -163,12 +163,12 @@ func (p *transferProgressReader) Read(buf []byte) (int, error) {
 func runStore(ctx context.Context, peerAddr, filePath, fileID string, pieceIndex int, serviceEnd int64, commitmentNonce, paymentCommitment, fileFormat, deletionAuthHash, transferID, uploader string, transferIssuedAt int64, transferSig, expectedPieceRoot string, expectedPieceBlockSize int64) {
 	f, err := os.Open(filePath)
 	if err != nil {
-		log.Fatal(err)
+		diagnosticFatal(err)
 	}
 	defer f.Close()
 	st, err := f.Stat()
 	if err != nil {
-		log.Fatal(err)
+		diagnosticFatal(err)
 	}
 
 	baseReq := StoreReq{
@@ -197,7 +197,7 @@ func runStore(ctx context.Context, peerAddr, filePath, fileID string, pieceIndex
 		// request lets rolling deployments fall back to the legacy probe flow.
 		s, openErr := tryOpenStream(ctx, h, peerAddr, StoreProtocolV3, StoreProtocol)
 		if openErr != nil {
-			log.Fatal(openErr)
+			diagnosticFatal(openErr)
 		}
 		selected := s.Protocol()
 		_ = s.Close()
@@ -244,16 +244,16 @@ func runStoreV3(ctx context.Context, h host.Host, peerAddr string, f *os.File, s
 		}
 		if !ready.OK || !ready.Ready {
 			_ = s.Close()
-			log.Fatal(ready.Err)
+			diagnosticFatal(ready.Err)
 		}
 		offset := ready.ResumeOffset
 		if offset < 0 || offset > size {
 			_ = s.Close()
-			log.Fatalf("bad resume offset %d for size %d", offset, size)
+			diagnosticFatalf("bad resume offset %d for size %d", offset, size)
 		}
 		if _, err := f.Seek(offset, io.SeekStart); err != nil {
 			_ = s.Close()
-			log.Fatal(err)
+			diagnosticFatal(err)
 		}
 		progress := &transferProgressReader{
 			r: f, direction: "upload", transferred: offset, total: size,
@@ -278,9 +278,9 @@ func runStoreV3(ctx context.Context, h host.Host, peerAddr string, f *os.File, s
 			log.Printf("[store resume] %s; continuing at byte %d", resp.Err, resp.ResumeOffset)
 			continue
 		}
-		log.Fatal(resp.Err)
+		diagnosticFatal(resp.Err)
 	}
-	log.Fatal("store resume attempts exhausted")
+	diagnosticFatal("store resume attempts exhausted")
 }
 
 func runStoreV2(ctx context.Context, h host.Host, peerAddr string, f *os.File, size int64, baseReq StoreReq) {
@@ -292,11 +292,11 @@ func runStoreV2(ctx context.Context, h host.Host, peerAddr string, f *os.File, s
 		var probe StoreResp
 		if err := json.NewDecoder(ps).Decode(&probe); err != nil {
 			ps.Close()
-			log.Fatal(err)
+			diagnosticFatal(err)
 		}
 		ps.Close()
 		if !probe.OK {
-			log.Fatal(probe.Err)
+			diagnosticFatal(probe.Err)
 		}
 		if probe.Complete {
 			writePrettyJSON(os.Stdout, probe)
@@ -304,10 +304,10 @@ func runStoreV2(ctx context.Context, h host.Host, peerAddr string, f *os.File, s
 		}
 		offset := probe.ResumeOffset
 		if offset < 0 || offset > size {
-			log.Fatalf("bad resume offset %d for size %d", offset, size)
+			diagnosticFatalf("bad resume offset %d for size %d", offset, size)
 		}
 		if _, err := f.Seek(offset, io.SeekStart); err != nil {
-			log.Fatal(err)
+			diagnosticFatal(err)
 		}
 
 		req := baseReq
@@ -335,9 +335,9 @@ func runStoreV2(ctx context.Context, h host.Host, peerAddr string, f *os.File, s
 			log.Printf("[store resume] %s; continuing at byte %d", resp.Err, resp.ResumeOffset)
 			continue
 		}
-		log.Fatal(resp.Err)
+		diagnosticFatal(resp.Err)
 	}
-	log.Fatal("store resume attempts exhausted")
+	diagnosticFatal("store resume attempts exhausted")
 }
 
 // runQuote opens a QuoteProtocol stream to VK, sends a QuoteReq, and prints the
@@ -353,14 +353,14 @@ func runQuote(
 	fileID, uploader string, issuedAt int64, quoteSig string,
 ) {
 	if quoteSig != "" && transferID == "" {
-		log.Fatal("a signed quote request needs --transfer-id: the signature covers it")
+		diagnosticFatal("a signed quote request needs --transfer-id: the signature covers it")
 	}
 	h := newClientHostWithIdentity(clientIdentityKey)
 	defer h.Close()
 	if transferID == "" {
 		nonce, err := randomNonce()
 		if err != nil {
-			log.Fatal(err)
+			diagnosticFatal(err)
 		}
 		transferID = "ftq_" + strings.TrimPrefix(nonce, "0x")
 	}
@@ -405,7 +405,7 @@ func runQuote(
 		writePrettyJSON(os.Stdout, resp)
 		return
 	}
-	log.Fatal("quote admission attempts exhausted")
+	diagnosticFatal("quote admission attempts exhausted")
 }
 
 // runRenew asks a VK to quote a longer term for a piece it already stores.
@@ -435,7 +435,7 @@ func runRenew(ctx context.Context, peerAddr, paymentCommitment string, newServic
 		writePrettyJSON(os.Stdout, resp)
 		return
 	}
-	log.Fatal("renew attempts exhausted")
+	diagnosticFatal("renew attempts exhausted")
 }
 
 func runGet(ctx context.Context, peerAddr, pieceRoot, outPath, fileID, requester, sig string, issuedAt int64) {
@@ -477,21 +477,21 @@ func runGet(ctx context.Context, peerAddr, pieceRoot, outPath, fileID, requester
 		}
 		if !resp.OK {
 			_ = s.Close()
-			log.Fatal(resp.Err)
+			diagnosticFatal(resp.Err)
 		}
 		if resp.Offset != offset {
 			_ = s.Close()
-			log.Fatalf("resume offset mismatch: local=%d vk=%d", offset, resp.Offset)
+			diagnosticFatalf("resume offset mismatch: local=%d vk=%d", offset, resp.Offset)
 		}
 		out, err := os.OpenFile(partPath, os.O_CREATE|os.O_WRONLY, 0600)
 		if err != nil {
 			_ = s.Close()
-			log.Fatal(err)
+			diagnosticFatal(err)
 		}
 		if _, err := out.Seek(offset, io.SeekStart); err != nil {
 			out.Close()
 			_ = s.Close()
-			log.Fatal(err)
+			diagnosticFatal(err)
 		}
 		progress := &transferProgressReader{
 			r: r, direction: "download", transferred: offset, total: resp.TotalSize,
@@ -510,18 +510,18 @@ func runGet(ctx context.Context, peerAddr, pieceRoot, outPath, fileID, requester
 		}
 		got, _, _, _, err := computePieceCommitment(partPath, blockSize)
 		if err != nil {
-			log.Fatal(err)
+			diagnosticFatal(err)
 		}
 		if !sameRoot(got, pieceRoot) {
-			log.Fatalf("integrity failed, got %s", got)
+			diagnosticFatalf("integrity failed, got %s", got)
 		}
 		if err := os.Rename(partPath, outPath); err != nil {
-			log.Fatal(err)
+			diagnosticFatal(err)
 		}
 		fmt.Println("downloaded and verified:", outPath)
 		return
 	}
-	log.Fatal("download resume attempts exhausted")
+	diagnosticFatal("download resume attempts exhausted")
 }
 
 func runProve(ctx context.Context, peerAddr, pieceRoot string) {
@@ -531,7 +531,7 @@ func runProve(ctx context.Context, peerAddr, pieceRoot string) {
 	writeJSON(s, ProveReq{PieceRoot: pieceRoot, PieceID: pieceRoot})
 	var resp ProveResp
 	if err := json.NewDecoder(s).Decode(&resp); err != nil {
-		log.Fatal(err)
+		diagnosticFatal(err)
 	}
 	writePrettyJSON(os.Stdout, resp)
 }
@@ -584,7 +584,7 @@ func runDelete(ctx context.Context, peerAddr, commitmentHash, deletionAuthSecret
 		}
 		return
 	}
-	log.Fatal("delete admission attempts exhausted")
+	diagnosticFatal("delete admission attempts exhausted")
 }
 
 func runHasPiece(ctx context.Context, peerAddr, pieceRoot string) {
@@ -594,7 +594,7 @@ func runHasPiece(ctx context.Context, peerAddr, pieceRoot string) {
 	writeJSON(s, HasPieceReq{PieceRoot: pieceRoot})
 	var resp HasPieceResp
 	if err := json.NewDecoder(bufio.NewReader(s)).Decode(&resp); err != nil {
-		log.Fatal(err)
+		diagnosticFatal(err)
 	}
 	writePrettyJSON(os.Stdout, resp)
 	if resp.Error != "" {
@@ -608,7 +608,7 @@ func runInfo(ctx context.Context, peerAddr string) {
 	defer s.Close()
 	var info StorageInfo
 	if err := json.NewDecoder(bufio.NewReader(s)).Decode(&info); err != nil {
-		log.Fatal(err)
+		diagnosticFatal(err)
 	}
 	writePrettyJSON(os.Stdout, info)
 }
@@ -634,7 +634,7 @@ func runRecoveryReceipt(ctx context.Context, peerAddr, fileID, pieceRoot,
 	})
 	var resp RecoveryReceiptResp
 	if err := json.NewDecoder(bufio.NewReader(s)).Decode(&resp); err != nil {
-		log.Fatal(err)
+		diagnosticFatal(err)
 	}
 	writePrettyJSON(os.Stdout, resp)
 	if resp.Error != "" {
@@ -657,7 +657,7 @@ func runRecoveryVault(ctx context.Context, peerAddr, fileID, uploadID, sealed,
 	})
 	var resp RecoveryVaultResp
 	if err := json.NewDecoder(bufio.NewReader(s)).Decode(&resp); err != nil {
-		log.Fatal(err)
+		diagnosticFatal(err)
 	}
 	writePrettyJSON(os.Stdout, resp)
 	if resp.Error != "" {

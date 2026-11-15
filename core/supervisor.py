@@ -24,7 +24,10 @@ class LogReader:
 
 def run_workers(cfg,state,runtime,server,proof,environment,stop,lock_options,on_ready,log,on_started=None):
     """Use native admission readiness; process startup alone is not readiness."""
-    state=Path(state);runtime=Path(runtime);processes=[];streams=[]
+    state=Path(state);runtime=Path(runtime);processes=[];streams=[];claims=None
+    from ft_diagnostics import start
+    diagnostics = start(home=state)
+    environment = dict(environment, FILETRUST_DIAGNOSTICS_HOME=str(state))
     logs=state/'logs';logs.mkdir(mode=0o700,parents=True,exist_ok=True)
     readers={name:LogReader(logs/(name+'.log')) for name in ('server','proof','prover')}
     console=ConsoleProgress(log)
@@ -78,6 +81,8 @@ def run_workers(cfg,state,runtime,server,proof,environment,stop,lock_options,on_
             if server_started and len(processes)==1:
                 log('Server started; starting proof worker')
                 start('proof',proof)
+                from escrow_claim import start_claim_worker
+                claims=start_claim_worker(cfg,environment,stop,log)
                 if on_started is not None:on_started()
                 console.phase('Preparing storage and initial proofs; uploads remain closed')
             if server_started and admission_open and not health_written:
@@ -86,7 +91,13 @@ def run_workers(cfg,state,runtime,server,proof,environment,stop,lock_options,on_
                 console.admission(True)
             if not server_started and deadline is not None and time.monotonic()>deadline:
                 raise ValueError('Server did not start before startup_timeout_sec; see server log')
+    except Exception as error:
+        if diagnostics is not None:
+            diagnostics.capture(error, operation="worker.supervise", error_code="FT_WORKER_EXITED", component="supervisor")
+        raise
     finally:
+        stop.set()
+        if claims is not None:claims.join(timeout=130)
         # Stop proof creation before the server; preserve RAM credentials until both exit.
         for proc in reversed(processes):
             if proc.poll() is None:proc.terminate()

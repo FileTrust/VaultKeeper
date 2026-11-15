@@ -156,20 +156,20 @@ func loadOrGenIdentity(storageDir string) crypto.PrivKey {
 	if readErr == nil {
 		priv, err := crypto.UnmarshalPrivateKey(data)
 		if err != nil {
-			log.Fatal("[identity] invalid saved peer identity; restore a backup instead of replacing it")
+			diagnosticFatal("[identity] invalid saved peer identity; restore a backup instead of replacing it")
 		}
 		return priv
 	}
 	if credential != "" || !os.IsNotExist(readErr) {
-		log.Fatal("[identity] cannot read the protected peer identity")
+		diagnosticFatal("[identity] cannot read the protected peer identity")
 	}
 	priv, _, err := crypto.GenerateKeyPair(crypto.Ed25519, -1)
 	if err != nil {
-		log.Fatalf("[identity] failed to generate identity key: %v", err)
+		diagnosticFatalf("[identity] failed to generate identity key: %v", err)
 	}
 	data, err = crypto.MarshalPrivateKey(priv)
 	if err != nil {
-		log.Fatalf("[identity] failed to marshal identity key: %v", err)
+		diagnosticFatalf("[identity] failed to marshal identity key: %v", err)
 	}
 	if err := os.WriteFile(keyPath, data, 0600); err != nil {
 		log.Printf("[identity] warning: could not save identity key to %s: %v", keyPath, err)
@@ -239,7 +239,7 @@ func runServer(ctx context.Context, listen string, cfg ServerConfig) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	if err := initStorage(cfg.Storage); err != nil {
-		log.Fatal(err)
+		diagnosticFatal(err)
 	}
 	// This VK looks after its own log folder: zip finished logs, drop ones past
 	// their retention. Transaction records outlive ordinary logs; read-call
@@ -251,12 +251,12 @@ func runServer(ctx context.Context, listen string, cfg ServerConfig) {
 		KeepDaysByName: map[string]int{"transactions": 90, "calls": 3},
 	})
 	if err := enforceDeploymentManifest(cfg.DeploymentManifestPath, cfg); err != nil {
-		log.Fatalf("[deploy] %v", err)
+		diagnosticFatalf("[deploy] %v", err)
 	}
 	// G.4B-LV0: the manifest is loaded and validated above; the deployed proof profile must
 	// agree with this VK's local profile before any capacity work can begin. Terminal.
 	if err := enforceDeployedProofProfile(cfg); err != nil {
-		log.Fatalf("[capacity] deployed proof-profile preflight failed: %v", err)
+		diagnosticFatalf("[capacity] deployed proof-profile preflight failed: %v", err)
 	}
 	transferAdmissionMu.Lock()
 	transferAdmission = newTransferAdmissionController(cfg.Storage, cfg)
@@ -275,22 +275,22 @@ func runServer(ctx context.Context, listen string, cfg ServerConfig) {
 		}
 	}
 	if err := prepareCapacityForServer(cfg.Storage, cfg); err != nil {
-		log.Fatalf("[capacity] startup preparation failed: %v", err)
+		diagnosticFatalf("[capacity] startup preparation failed: %v", err)
 	}
 	// Local partition assignment only. On-chain stale-partition cleanup must not
 	// run here: after a prior load test the chain can still hold many partitions,
 	// and that RPC/tx work easily exceeds the launcher peerId timeout (15s).
 	if err := ensureAllPartitionAssignments(cfg.Storage, cfg); err != nil {
-		log.Fatalf("[partition] assignment initialization failed: %v", err)
+		diagnosticFatalf("[partition] assignment initialization failed: %v", err)
 	}
 	addr, err := ma.NewMultiaddr(listen)
 	if err != nil {
-		log.Fatal(err)
+		diagnosticFatal(err)
 	}
 	identity := loadOrGenIdentity(cfg.Storage)
 	h, err := libp2p.New(libp2p.ListenAddrs(addr), libp2p.Identity(identity))
 	if err != nil {
-		log.Fatal(err)
+		diagnosticFatal(err)
 	}
 
 	// The v2 upload protocol performs no authorization at all -- it predates the
@@ -2505,7 +2505,7 @@ func listSectorsJSON(storage string) {
 
 func ensureStorageForCLI(storage string) {
 	if err := initStorage(storage); err != nil {
-		log.Fatal(err)
+		diagnosticFatal(err)
 	}
 	_ = filepath.Separator
 }

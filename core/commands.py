@@ -15,7 +15,7 @@ def build_commands(cfg,state,runtime,run_dir):
     common=[binary,'--storage',storage,'--rpc-url',cfg['rpc_url'],'--chain-id',str(cfg['chain_id']),
             '--vk-private-key-file',str(run_dir/'signing.key'),'--zk-block-size',str(cfg['zk_block_size']),
             '--zk-tree-depth',str(cfg['zk_tree_depth']),'--capacity-bytes',str(cfg['storage_capacity_bytes']),
-            '--storage-proof-contract',cfg['storageproof_address'],'--capacity-proof-contract',cfg['capacity_proof_address'],
+            '--vk-escrow-contract',cfg['vk_escrow_address'],'--storage-proof-contract',cfg['storageproof_address'],'--capacity-proof-contract',cfg['capacity_proof_address'],
             '--file-registration-contract',cfg['file_registration_address'],'--deletion-release-contract',cfg['deletion_release_address'],
             '--vk-registry-contract',cfg['vault_keeper_registry_address'],'--vk-registry-abi',str(cfg['vault_keeper_registry_json']),
             '--transaction-log-path',str(tx_log),'--fixed-gas-price-wei',str(cfg['fixed_gas_price_wei']),'--chain-proof-cmd',helper,'--resume-capacity',
@@ -25,7 +25,7 @@ def build_commands(cfg,state,runtime,run_dir):
             '--partition-prover-cmd',wrapper,'--zk-prover-cmd',shlex.quote(str(runtime/'prover_wrapper.sh')),
             '--deterministic-challenge',*flags(cfg,COMMON)]
     server=[*common,'--mode','server','--listen',f'/ip4/0.0.0.0/tcp/{cfg["port"]}',
-            '--acl-address',cfg['acl_address'],'--vk-escrow-contract',cfg['vk_escrow_address'],
+            '--acl-address',cfg['acl_address'],
             '--advertise-ip',cfg.get('advertise_ip','auto'),'--storage-fee',str(cfg['storage_fee']),
             '--su-to-wei-rate',str(cfg['su_to_wei_rate']),'--stake-wei',str(cfg.get('stake_wei',0)),*flags(cfg,SERVER)]
     if cfg['discovery_enabled'] and cfg.get('discovery_urls'):server+=['--discovery',','.join(cfg['discovery_urls'])]

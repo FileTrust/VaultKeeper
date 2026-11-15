@@ -205,6 +205,9 @@ def _sp_load_config() -> dict:
     return {
         "rpc_url":        get("RPC_URL"),
         "storage": storage,
+        "vk_escrow_address": get("VK_ESCROW_ADDRESS", "vk_escrow_address"),
+        "vk_escrow_json": get("VK_ESCROW_JSON", "vk_escrow_json"),
+        "file_registration_json": get("FILE_REGISTRATION_JSON", "file_registration_json"),
         "chain_id": int(get("CHAIN_ID", "chain_id", default="0")),
         "vault_keeper_registry_address": get("VAULT_KEEPER_REGISTRY_ADDRESS", "vault_keeper_registry_address"),
         "address":        get("STORAGEPROOF_ADDRESS"),
@@ -244,8 +247,6 @@ def _sp_load_config() -> dict:
         "transaction_log_path": get("TRANSACTION_LOG_PATH", default=str(TX.default_log_path())),
         "log_eth_calls": str(get("LOG_ETH_CALLS", "log_eth_calls", default="false")).lower() in {"true", "1", "yes", "on"},
     }
-
-
 
 
 def _sp_load_contract(
@@ -404,8 +405,6 @@ def _sp_guard_heartbeat_nonce(w3, address, context, nonce, *, explicit=False):
     raise RuntimeError("Account heartbeat transaction is unresolved; retry after reconciliation")
 
 
-
-
 def _sp_send_tx(w3: Web3, account, fn, value: int = 0, context: dict | None = None,
                 explicit_nonce: int | None = None, caller_holds_lock: bool = False) -> str:
     ctx = context or {}
@@ -562,8 +561,6 @@ def _sp_send_tx(w3: Web3, account, fn, value: int = 0, context: dict | None = No
     return tx_hash.hex()
 
 
-
-
 def _sp_bytes32(value: str, label: str) -> bytes:
     s = str(value or "").strip()
     if not s:
@@ -680,6 +677,11 @@ def _sp_register_partition(w3: Web3, account, contract, partition: dict, challen
     sectors    = partition.get("sectors") or []
     expiration = int(partition.get("expiration") or 0)
     sids, sroots, bcounts, pcommits = _sp_build_partition_arrays(w3, sectors)
+    if context.get("vk_escrow_address") and context.get("storage"):
+        from escrow_evidence import archive_current_manifest
+        vk = account.address if hasattr(account, "address") else str(account)
+        previous_key = contract.functions.partitionKeyOf(w3.to_checksum_address(vk), dl_idx, pt_idx).call()
+        archive_current_manifest(w3, contract, previous_key, context)
     try:
         fn = contract.functions.registerOrUpdatePartitionV2(
             dl_idx, pt_idx, sids, sroots, bcounts, pcommits, expiration, challenge_count,
@@ -713,6 +715,11 @@ def _sp_register_partition_only(w3: Web3, account, contract, req: dict, context:
 def _sp_deactivate_partition(w3: Web3, account, contract, req: dict, context: dict) -> None:
     dl_idx = int(req.get("deadlineIndex", 0))
     pt_idx = int(req.get("partitionIndex", 0))
+    if context.get("vk_escrow_address") and context.get("storage"):
+        from escrow_evidence import archive_current_manifest
+        vk = account.address if hasattr(account, "address") else str(account)
+        previous_key = contract.functions.partitionKeyOf(w3.to_checksum_address(vk), dl_idx, pt_idx).call()
+        archive_current_manifest(w3, contract, previous_key, context)
     tx_hash = _sp_send_tx(
         w3, account,
         contract.functions.deactivatePartition(dl_idx, pt_idx),
@@ -1091,6 +1098,8 @@ def _sp_get_partition_challenge_deterministic(w3: Web3, account, contract, req: 
 
     # Register/update refreshes the challengeAnchor for deterministic seed derivation.
     pKey, _, _    = _sp_register_partition(w3, account, contract, partition, challenge_count, context)
+    from escrow_evidence import archive_current_manifest
+    archive_current_manifest(w3, contract, pKey, context)
     det_seed      = contract.functions.computePartitionDetSeed(pKey, round_id).call()
     public_inputs = contract.functions.expectedPartitionPublicInputsDeterministic(pKey, round_id).call()
 
@@ -1231,6 +1240,8 @@ def _sp_freeze_partition_snapshot(w3: Web3, account, storage_contract, snapshot_
     round_id = int(req.get("round") or storage_contract.functions.currentRound().call())
     if proof_epoch_id <= 0:
         _sp_fail("proofEpochId is required for frozen partition snapshots")
+    from escrow_evidence import archive_current_manifest
+    archive_current_manifest(w3, storage_contract, p_key, context)
     status = _sp_frozen_snapshot_dict(snapshot_contract, p_key)
     tx_hash = ""
     if status["snapshotExists"]:
@@ -1367,6 +1378,8 @@ def _sp_submit_frozen_partition_zk_proof(w3: Web3, account, storage_contract, sn
         _sp_fail("proofEpochId, contentVersion, round, and publicInputs are required for frozen proof submission")
     if not content_hash or snapshot_nonce <= 0:
         _sp_fail("contentHash and snapshotNonce are required for frozen proof submission")
+    from escrow_evidence import archive_current_manifest
+    archive_current_manifest(w3, storage_contract, p_key, context)
     status = _sp_frozen_snapshot_dict(snapshot_contract, p_key)
     if (
         status["snapshotProven"]
@@ -1830,6 +1843,15 @@ def _sp_capacity_incremental_selection_snapshot(
             "chainPartitionKey": Web3.to_hex(p_key),
             "challengeCount": challenge_count,
         })
+    if context.get("vk_escrow_address") and context.get("storage"):
+        from escrow_evidence import terminal_proof_requirements
+        required = terminal_proof_requirements(w3, contract, snapshot_contract,
+            entries, context, vk, block, int(block_info["timestamp"]))
+        for entry in entries:
+            cutoff = required.get(entry["identity"]["partitionKey"])
+            if cutoff is not None:
+                entry["terminalProofRequired"] = True
+                entry["terminalProofAgeSeconds"] = int(block_info["timestamp"]) - cutoff
     active_capacity_keys = []
     for p_key in contract.functions.getVkPartitionKeys(vk).call(block_identifier=block):
         info = contract.functions.partitions(p_key).call(block_identifier=block)

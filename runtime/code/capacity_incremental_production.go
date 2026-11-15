@@ -475,7 +475,7 @@ func computeCapacityIncrementalPlan(
 			fmt.Errorf("read pinned certification aggregate: %w", err)
 	}
 	candidates, err := pendingCapacityBatchCandidates(
-		storage, partitions, certified.ExpiredCertifiedBytes > 0, certified.ChainTimestamp)
+		storage, partitions, certified.ExpiredCertifiedBytes > 0 || cfg.VKEscrowContract != "", certified.ChainTimestamp)
 	if err != nil {
 		return emptyPlan, emptySelection, certified, false,
 			fmt.Errorf("read durable incremental candidates: %w", err)
@@ -497,6 +497,26 @@ func computeCapacityIncrementalPlan(
 	view, err := newPinnedCapacitySelectionView(snapshot, partitions, cfg)
 	if err != nil {
 		return emptyPlan, emptySelection, certified, false, err
+	}
+	// Existing exact audit membership is used only for a pinned, unpaid mature escrow.
+	// Candidate discovery above retains deletion/freeze seals and current identities.
+	terminal := map[string]CapacitySelectionSnapshotEntry{}
+	for _, entry := range snapshot.Entries {
+		if entry.TerminalProofRequired && entry.Identity.Kind == PartitionKindData && entry.Identity.Active {
+			terminal[strings.ToLower(entry.Identity.PartitionKey)] = entry
+		}
+	}
+	for i := range candidates {
+		if entry, ok := terminal[strings.ToLower(candidates[i].PartitionKey)]; ok {
+			candidates[i].AuditRequired = true
+			age := entry.TerminalProofAgeSeconds
+			if age > uint64((1<<63-1)/int64(time.Second)) {
+				age = uint64((1<<63 - 1) / int64(time.Second))
+			}
+			if duration := time.Duration(age) * time.Second; duration > candidates[i].MutationAge {
+				candidates[i].MutationAge = duration
+			}
+		}
 	}
 	selection, err := SelectCapacityBatchMembership(context.Background(), view,
 		CapacityBatchSelectionInput{Mode: BatchModeIncremental, Candidates: candidates})

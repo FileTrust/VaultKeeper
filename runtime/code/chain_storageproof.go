@@ -194,11 +194,13 @@ type IncrementalBatchMember struct {
 // Identity.PartitionKey remains the stable local kind/deadline/partition coordinate used by
 // durable plans; ChainPartitionKey is the exact bytes32 contract identity.
 type CapacitySelectionSnapshotEntry struct {
-	Identity              PartitionIdentity            `json:"identity"`
-	Certification         PartitionCertificationRecord `json:"certification"`
-	CanonicalIdentityHash string                       `json:"canonicalIdentityHash"`
-	ChainPartitionKey     string                       `json:"chainPartitionKey"`
-	ChallengeCount        uint16                       `json:"challengeCount"`
+	Identity                PartitionIdentity            `json:"identity"`
+	Certification           PartitionCertificationRecord `json:"certification"`
+	CanonicalIdentityHash   string                       `json:"canonicalIdentityHash"`
+	ChainPartitionKey       string                       `json:"chainPartitionKey"`
+	ChallengeCount          uint16                       `json:"challengeCount"`
+	TerminalProofRequired   bool                         `json:"terminalProofRequired"`
+	TerminalProofAgeSeconds uint64                       `json:"terminalProofAgeSeconds"`
 }
 
 // ProofClockStatus is the chain-authoritative clock used by proof scheduling.

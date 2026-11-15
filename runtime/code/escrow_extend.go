@@ -334,10 +334,11 @@ func extendSectorForRenewal(cfg ServerConfig, sectorID string, newServiceEnd int
 	if err != nil {
 		return fmt.Errorf("renewal: read sector: %w", err)
 	}
-	if sector.Expiration >= newServiceEnd {
-		return nil // already covers the new term
+	proofUntil := terminalProofExpiration(cfg, newServiceEnd)
+	if sector.Expiration >= proofUntil {
+		return nil // already covers the new term and terminal proof
 	}
-	sector.Expiration = newServiceEnd
+	sector.Expiration = proofUntil
 	if sector.MaxServiceEnd < newServiceEnd {
 		sector.MaxServiceEnd = newServiceEnd
 	}

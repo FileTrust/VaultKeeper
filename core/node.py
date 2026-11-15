@@ -194,6 +194,8 @@ def doctor(args):
     return cfg,wallet,profile,runtime
 
 def run(args):
+    from ft_diagnostics import start
+    start(home=args.home)
     resource.setrlimit(resource.RLIMIT_CORE,(0,0));os.umask(0o077)
     state=args.home.resolve();lock=(state/'.run.lock').open('a');fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
     os.set_inheritable(lock.fileno(),True);os.environ['FILETRUST_GUARDIAN_STATE_LOCK_FD']=str(lock.fileno())
@@ -245,5 +247,8 @@ if __name__=='__main__':
                 build_runtime(HERE,repair=True)
                 cfg=json.loads((args.home/'config.json').read_text());prepare_release(args.home,cfg['download_profiles'])
     except (Exception,KeyboardInterrupt) as exc:
+        if args.command == 'run':
+            from ft_diagnostics import capture_current
+            capture_current(exc, operation='startup', error_code='FT_STARTUP_FAILED', component='supervisor')
         # Transport exceptions may include URLs; custody exceptions may contain secrets.
         say('Vaultkeeper stopped: '+(str(exc) if isinstance(exc,(ValueError,PermissionError)) else type(exc).__name__));raise SystemExit(1)

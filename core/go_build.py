@@ -102,7 +102,7 @@ def source_files(root):
     for relative in ('runtime/code','runtime/prover'):
         directory=root/relative
         for path in sorted(directory.iterdir()):
-            if path.name in ('go.mod','go.sum') or path.suffix=='.go':
+            if path.name in ('go.mod','go.sum','diagnostics-policy.json') or path.suffix=='.go':
                 if path.is_symlink() or not path.is_file():raise ValueError('Source must be regular files')
                 if path.name=='setup_factory.go' or path.name.endswith('_test.go'):raise ValueError('Factory/test source is not permitted in the public build')
                 paths.append(path)

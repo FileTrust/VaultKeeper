@@ -2765,7 +2765,7 @@ func runProofDaemon(
 	// proving begins. Fail closed (the proving process refuses to start) on failure so a
 	// malformed/unsafe legacy artifact keeps proving disabled rather than running workers.
 	if err := runArtifactStartupBarrier(storage); err != nil {
-		log.Fatalf("[proof-snapshot] snapshot artifact startup barrier failed; proving disabled: %v", err)
+		diagnosticFatalf("[proof-snapshot] snapshot artifact startup barrier failed; proving disabled: %v", err)
 	}
 	if pollSeconds <= 0 {
 		pollSeconds = 60
@@ -2792,12 +2792,12 @@ func runProofDaemon(
 	// then retry the first partition forever without ever reaching certification. This gate is
 	// terminal: no registration, no retry scheduling, no capacity campaign.
 	if err := enforceDeployedProofProfile(storageCfg); err != nil {
-		log.Fatalf("[capacity] deployed proof-profile preflight failed; capacity bootstrap "+
+		diagnosticFatalf("[capacity] deployed proof-profile preflight failed; capacity bootstrap "+
 			"aborted before the first partition registration: %v", err)
 	}
 
 	if err := ensureAllPartitionAssignments(storage, storageCfg); err != nil {
-		log.Fatalf("[partition] proof-daemon assignment initialization failed: %v", err)
+		diagnosticFatalf("[partition] proof-daemon assignment initialization failed: %v", err)
 	}
 
 	usePartitions := deadlineCount > 0 && partitionProverCmd != ""

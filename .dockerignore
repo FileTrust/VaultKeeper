@@ -5,6 +5,7 @@
 !vaultkeeper.py
 !app_start.py
 !manage.py
+!diagnostics.py
 !uninstall.py
 !update.py
 !upgrade.py
@@ -19,6 +20,7 @@
 !THIRD-PARTY-NOTICES.md
 !core/
 !core/*.py
+!core/ft_diagnostics_policy.json
 !runtime/
 !runtime/**
 !licenses/
@@ -38,3 +40,6 @@ installation-selection.json
 **/*.r1cs
 **/*.key
 **/.env*
+
+# Private local bug-report drafts are never source or image assets.
+**/.filetrust-diagnostics/
