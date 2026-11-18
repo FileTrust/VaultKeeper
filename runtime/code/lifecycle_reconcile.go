@@ -73,6 +73,10 @@ type StoreLifecycleOperation struct {
 	RollbackCapacityMutationSequence uint64 `json:"rollbackCapacityMutationSequence,omitempty"`
 	Phase                            string `json:"phase"`
 	LastError                        string `json:"lastError,omitempty"`
+	// Only a locally authenticated, escrow-backed store sets this marker before
+	// registration. Temporary RPC failures must not destroy its durable bytes.
+	RegistrationPending bool   `json:"registrationPending,omitempty"`
+	PaymentCommitment   string `json:"paymentCommitment,omitempty"`
 	// B.4: a conclusively failed upload operation. Its reservation may be released once local
 	// sector state proves the reserved sector is not durable; liveness evidence alone never is.
 	Terminal       bool   `json:"terminal,omitempty"`
@@ -1902,6 +1906,27 @@ func reconcileStoreLifecycleOperationLocked(cfg ServerConfig, operation StoreLif
 			}
 			return true, nil
 		}
+	}
+
+	if !expired && operation.RegistrationPending && !operation.Terminal {
+		creds, err := LoadPaymentCredentials(cfg.Storage, operation.PaymentCommitment)
+		if err != nil {
+			return false, fmt.Errorf("load pending registration terms: %w", err)
+		}
+		if operation.PaymentCommitment == "" ||
+			!strings.EqualFold(creds.PaymentCommitment, operation.PaymentCommitment) ||
+			!strings.EqualFold(creds.RegistrationCommitment, operation.RegistrationCommitment) {
+			return false, fmt.Errorf("pending registration credentials do not match the original store")
+		}
+		deadline, err := verifyEscrowDeposit(cfg, creds)
+		if err == nil {
+			return false, fmt.Errorf("store registration awaiting same-transfer retry before original deadline %d", deadline)
+		}
+		if errors.Is(err, ErrRPCUnavailable) {
+			return false, err // An unavailable view is not proof of expiry or failure.
+		}
+		// A definitive rejection (including the original on-chain deadline)
+		// follows the existing authenticated rollback and capacity-proof path.
 	}
 
 	capacityMutation, err := beginCapacityMutationOperation(

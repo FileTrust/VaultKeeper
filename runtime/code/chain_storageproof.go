@@ -82,6 +82,7 @@ type ChainProofCommandRequest struct {
 type ChainProofCommandResponse struct {
 	OK               bool     `json:"ok"`
 	Err              string   `json:"err,omitempty"`
+	Retryable        bool     `json:"retryable,omitempty"`
 	Round            uint64   `json:"round,omitempty"`
 	ChallengeSeed    string   `json:"challengeSeed,omitempty"`
 	ChallengeIndexes []uint64 `json:"challengeIndexes,omitempty"`
@@ -445,10 +446,13 @@ func runChainProofCommandLocked(command string, req ChainProofCommandRequest) (C
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
-			return ChainProofCommandResponse{}, fmt.Errorf("chain proof command timed out after %s", timeout)
+			return ChainProofCommandResponse{}, fmt.Errorf("%w: chain proof command timed out after %s", ErrRPCUnavailable, timeout)
 		}
 		var resp ChainProofCommandResponse
 		if jsonErr := json.Unmarshal(stdout.Bytes(), &resp); jsonErr == nil && resp.Err != "" {
+			if resp.Retryable {
+				return resp, fmt.Errorf("%w: chain proof command failed: %s", ErrRPCUnavailable, resp.Err)
+			}
 			return resp, fmt.Errorf("chain proof command failed: %w: %s", err, resp.Err)
 		}
 		detail := strings.TrimSpace(stderr.String())
@@ -462,6 +466,9 @@ func runChainProofCommandLocked(command string, req ChainProofCommandRequest) (C
 		return ChainProofCommandResponse{}, fmt.Errorf("chain proof command returned invalid json: %w: %s", err, stdout.String())
 	}
 	if !resp.OK {
+		if resp.Retryable {
+			return resp, fmt.Errorf("%w: chain proof command returned error: %s", ErrRPCUnavailable, resp.Err)
+		}
 		return resp, fmt.Errorf("chain proof command returned error: %s", resp.Err)
 	}
 	return resp, nil

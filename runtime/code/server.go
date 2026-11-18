@@ -1474,6 +1474,12 @@ func handleStoreProtocol(s network.Stream, cfg ServerConfig, admissionHandshake 
 		Phase:                  "staged",
 		CreatedAt:              nowRFC3339(),
 	}
+	if existingStoredMeta != nil && pregenCreds != nil && escrowVerificationConfigured(cfg) {
+		// Keep the bounded retention marker across a restart during this retry,
+		// before the handler reaches its next external registration call.
+		storeOperation.PaymentCommitment = pregenCreds.PaymentCommitment
+		storeOperation.RegistrationPending = true
+	}
 	if err := writeStoreLifecycleOperation(cfg.Storage, storeOperation); err != nil {
 		if existingStoredMeta == nil {
 			_ = os.Remove(piecePath(cfg.Storage, meta.PieceRoot))
@@ -1562,6 +1568,7 @@ func handleStoreProtocol(s network.Stream, cfg ServerConfig, admissionHandshake 
 	if err != nil {
 		log.Printf("[store ✗] sector failed: %v  pieceRoot=%s", err, meta.PieceRoot)
 		storeOperation.LastError = err.Error()
+		storeOperation.RegistrationPending = false
 		_ = writeStoreLifecycleOperation(cfg.Storage, storeOperation)
 		if _, cleanupErr := reconcileStoreLifecycleUnderAccountingLock(cfg, storeOperation); cleanupErr != nil {
 			log.Printf("[lifecycle] sector failure cleanup pending piece=%s: %v", truncate(meta.PieceRoot, 18), cleanupErr)
@@ -1648,6 +1655,14 @@ func handleStoreProtocol(s network.Stream, cfg ServerConfig, admissionHandshake 
 	// already released above (see DEFECT F), before the accounting re-check; this repeat is
 	// kept only because Release is idempotent and the invariant "no partition lock crosses a
 	// chain RPC" is asserted at this exact boundary.
+	if cfg.FileRegistrationContract != "" && pregenCreds != nil && escrowVerificationConfigured(cfg) {
+		storeOperation.PaymentCommitment = pregenCreds.PaymentCommitment
+		storeOperation.RegistrationPending = true
+		if err := writeStoreLifecycleOperation(cfg.Storage, storeOperation); err != nil {
+			failStore("persist pending registration: "+err.Error(), 1)
+			return
+		}
+	}
 	partitionLease.Release()
 	if cfg.FileRegistrationContract != "" && cfg.ChainProofCmd != "" {
 		if _, err := registerCurrentDataPartitionForSector(cfg, sectorReceipt.SectorID); errors.Is(
@@ -1663,6 +1678,12 @@ func handleStoreProtocol(s network.Stream, cfg ServerConfig, admissionHandshake 
 		} else if err != nil {
 			log.Printf("[store ✗] partition registration failed: %v  pieceRoot=%s", err, meta.PieceRoot)
 			storeOperation.LastError = err.Error()
+			if errors.Is(err, ErrRPCUnavailable) && storeOperation.RegistrationPending {
+				_ = writeStoreLifecycleOperation(cfg.Storage, storeOperation)
+				failStoreForError("partition registration pending: ", err, requesterFailWeight(req.Size))
+				return
+			}
+			storeOperation.RegistrationPending = false
 			_ = writeStoreLifecycleOperation(cfg.Storage, storeOperation)
 			partitionLease.Release()
 			if _, cleanupErr := reconcileStoreLifecycleUnderAccountingLock(cfg, storeOperation); cleanupErr != nil {
@@ -1723,6 +1744,7 @@ func handleStoreProtocol(s network.Stream, cfg ServerConfig, admissionHandshake 
 			dl, pt, pRoot, err = currentPartitionForSector(sectorForReg, allSectorsForReg, cfg)
 			if err != nil {
 				storeOperation.LastError = err.Error()
+				storeOperation.RegistrationPending = false
 				_ = writeStoreLifecycleOperation(cfg.Storage, storeOperation)
 				partitionLease.Release()
 				if _, cleanupErr := reconcileStoreLifecycleUnderAccountingLock(cfg, storeOperation); cleanupErr != nil {
@@ -1771,6 +1793,10 @@ func handleStoreProtocol(s network.Stream, cfg ServerConfig, admissionHandshake 
 		}
 		if regErr != nil && !errors.Is(regErr, ErrAlreadyRegistered) {
 			storeOperation.LastError = regErr.Error()
+			// Observe a possibly accepted broadcast before deciding whether a retry
+			// is needed. The reconciler retains unregistered bytes on transport
+			// failure, but can still finish an already accepted registration now.
+			storeOperation.RegistrationPending = storeOperation.RegistrationPending && errors.Is(regErr, ErrRPCUnavailable)
 			_ = writeStoreLifecycleOperation(cfg.Storage, storeOperation)
 			partitionLease.Release()
 			registered, cleanupErr := reconcileStoreLifecycleUnderAccountingLock(cfg, storeOperation)

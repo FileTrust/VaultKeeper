@@ -1866,7 +1866,27 @@ def _sp_capacity_incremental_selection_snapshot(
     }))
 
 
+def _sp_rpc_error_response(exc: Exception) -> dict:
+    """Preserve transport failures across the subprocess boundary, not reverts."""
+    from web3.exceptions import TimeExhausted
+    if isinstance(exc, requests.HTTPError):
+        response = exc.response
+        retryable = response is not None and response.status_code in (408, 425, 429, 500, 502, 503, 504)
+    else:
+        retryable = isinstance(exc, (requests.ConnectionError, requests.Timeout,
+                                   ConnectionError, TimeoutError, TimeExhausted))
+    return {"ok": False, "err": str(exc), "retryable": retryable}
+
+
 def run_storageproof_client_mode() -> int:
+    try:
+        return _sp_run_storageproof_client_mode()
+    except Exception as exc:
+        print(json.dumps(_sp_rpc_error_response(exc)))
+        return 1
+
+
+def _sp_run_storageproof_client_mode() -> int:
     try:
         req = json.loads(sys.stdin.read() or "{}")
     except Exception as exc:
@@ -1882,7 +1902,7 @@ def run_storageproof_client_mode() -> int:
         _sp_fail("missing VK_PRIVATE_KEY or VK_ADDRESS")
     w3 = Web3(ResilientReadHTTPProvider(cfg["rpc_url"]))
     if not w3.is_connected():
-        _sp_fail(f"cannot connect to RPC {cfg['rpc_url']}")
+        raise requests.ConnectionError(f"cannot connect to RPC {cfg['rpc_url']}")
     account = (
         w3.eth.account.from_key(cfg["vk_private_key"])
         if cfg["vk_private_key"]
