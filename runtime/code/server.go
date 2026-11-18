@@ -2453,19 +2453,37 @@ func findStoredPieceByStoreReq(storage string, req StoreReq) (PieceMeta, bool) {
 
 func handleProve(s network.Stream, cfg ServerConfig) {
 	defer s.Close()
-	r := bufio.NewReader(s)
+	controller := transferController(cfg)
+	identity := transferIdentity("", requesterIDFromStream(s))
+	headerLease, retryAfter, admissionErr := controller.acquirePublicProofRequest(identity)
+	if admissionErr != nil {
+		writePublicProofResponse(s, ProveResp{OK: false, Busy: true, RetryAfterSeconds: retryAfter, Err: admissionErr.Error()})
+		return
+	}
+	defer headerLease.Release()
+	if err := s.SetReadDeadline(time.Now().Add(publicProofHeaderTimeout)); err != nil {
+		writePublicProofResponse(s, ProveResp{OK: false, Err: "cannot bound proof request read"})
+		return
+	}
+	limited := &io.LimitedReader{R: s, N: publicProofHeaderBytes + 1}
 	var req ProveReq
-	if err := json.NewDecoder(r).Decode(&req); err != nil {
-		writeJSON(s, ProveResp{OK: false, Err: err.Error()})
+	if err := json.NewDecoder(limited).Decode(&req); err != nil {
+		// A reset also notifies a sender blocked on the rest of an oversized
+		// header; CloseRead alone does not notify remote yamux streams.
+		_ = s.Reset()
+		return
+	}
+	if limited.N == 0 {
+		_ = s.Reset()
 		return
 	}
 	pieceRoot := requestProveRoot(req)
 	if pieceRoot == "" {
-		writeJSON(s, ProveResp{OK: false, Err: "missing pieceRoot"})
+		writePublicProofResponse(s, ProveResp{OK: false, Err: "missing pieceRoot"})
 		return
 	}
 	if err := validateRoot(pieceRoot); err != nil {
-		writeJSON(s, ProveResp{OK: false, Err: "invalid pieceRoot"})
+		writePublicProofResponse(s, ProveResp{OK: false, Err: "invalid pieceRoot"})
 		return
 	}
 	log.Printf("[prove ←] pieceRoot=%s", pieceRoot)
@@ -2476,10 +2494,9 @@ func handleProve(s network.Stream, cfg ServerConfig) {
 	// CPU with a stream of them -- the cheapest useful attack on a storage node
 	// is not theft, it is work. Proofs stay public; what they cost is bounded,
 	// by the same controller that already bounds uploads and downloads.
-	proveLease, proveRetryAfter, proveAdmissionErr := transferController(cfg).acquire(
-		"download", transferIdentity("", requesterIDFromStream(s)), "", 0)
+	proveLease, proveRetryAfter, proveAdmissionErr := controller.acquirePublicProofWork(identity)
 	if proveAdmissionErr != nil {
-		writeJSON(s, ProveResp{OK: false, Busy: true,
+		writePublicProofResponse(s, ProveResp{OK: false, Busy: true,
 			RetryAfterSeconds: proveRetryAfter, Err: proveAdmissionErr.Error()})
 		return
 	}
@@ -2488,17 +2505,17 @@ func handleProve(s network.Stream, cfg ServerConfig) {
 	meta, err := readMeta(cfg.Storage, pieceRoot)
 	if err != nil {
 		log.Printf("[prove] pieceRoot=%s exists=false", pieceRoot)
-		writeJSON(s, ProveResp{OK: true, Exists: false, PieceRoot: normalizeRoot(pieceRoot), PieceID: normalizeRoot(pieceRoot)})
+		writePublicProofResponse(s, ProveResp{OK: true, Exists: false, PieceRoot: normalizeRoot(pieceRoot), PieceID: normalizeRoot(pieceRoot)})
 		return
 	}
 	ok, got, err := verifyStoredPiece(cfg.Storage, pieceRoot)
 	if err != nil || !ok {
 		log.Printf("[prove ✗] pieceRoot=%s integrity failed: %s", pieceRoot, got)
-		writeJSON(s, ProveResp{OK: false, Exists: false, PieceRoot: normalizeRoot(pieceRoot), Err: fmt.Sprintf("integrity failed: got %s", got)})
+		writePublicProofResponse(s, ProveResp{OK: false, Exists: false, PieceRoot: normalizeRoot(pieceRoot), Err: fmt.Sprintf("integrity failed: got %s", got)})
 		return
 	}
 	log.Printf("[prove ✓] pieceRoot=%s exists=true size=%d sectorId=%s", pieceRoot, meta.Size, meta.SectorID)
-	writeJSON(s, ProveResp{OK: true, Exists: true, PieceRoot: meta.PieceRoot, PieceID: meta.PieceRoot, PieceHash: meta.PieceHash, HashAlg: meta.HashAlg, RootAlg: meta.RootAlg, PieceBlockSize: meta.PieceBlockSize, PieceBlockCount: meta.PieceBlockCount, Size: meta.Size, SectorID: meta.SectorID, SectorRoot: meta.SectorRoot, PiecePosition: meta.PiecePosition})
+	writePublicProofResponse(s, ProveResp{OK: true, Exists: true, PieceRoot: meta.PieceRoot, PieceID: meta.PieceRoot, PieceHash: meta.PieceHash, HashAlg: meta.HashAlg, RootAlg: meta.RootAlg, PieceBlockSize: meta.PieceBlockSize, PieceBlockCount: meta.PieceBlockCount, Size: meta.Size, SectorID: meta.SectorID, SectorRoot: meta.SectorRoot, PiecePosition: meta.PiecePosition})
 }
 
 func requestPieceRoot(req GetReq) string {

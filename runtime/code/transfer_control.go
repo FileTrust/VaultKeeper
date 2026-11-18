@@ -131,6 +131,9 @@ type transferAdmissionController struct {
 	acceptedTransfers uint64
 	proofStateChecked time.Time
 	proofStateActive  bool
+
+	publicProofRequests int
+	publicProofPeers    map[string]int
 }
 
 type transferLease struct {
